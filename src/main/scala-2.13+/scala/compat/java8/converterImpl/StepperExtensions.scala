@@ -34,7 +34,11 @@ class StepperExtensions[@specialized(Double, Int, Long) A](private val s: Steppe
         val is = s.asInstanceOf[Stepper[Double]]
         while (is.hasStep) a += is.nextStep()
         a.asInstanceOf[C]
-      case AnyAccumulator | null =>
+      case AnyAccumulator =>
+        val a = new AnyAccumulator[A]
+        while (s.hasStep) a += s.nextStep()
+        a.asInstanceOf[C]
+      case _ => 
         val a = new AnyAccumulator[A]
         while (s.hasStep) a += s.nextStep()
         a.asInstanceOf[C]

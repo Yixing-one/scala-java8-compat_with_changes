@@ -59,7 +59,7 @@ object FuturesConvertersImpl {
     override def exceptionally(fn: JF[Throwable, _ <: T]): CompletableFuture[T] = {
       val cf = new CompletableFuture[T]
       whenCompleteAsync(new BiConsumer[T, Throwable] {
-        override def accept(t: T, e: Throwable): Unit = {
+        override def accept(t: T, e: Throwable|Null): Unit = {
           if (e == null) cf.complete(t)
           else {
             val n: AnyRef =
@@ -95,7 +95,7 @@ object FuturesConvertersImpl {
   }
 
   class P[T](val wrapped: CompletionStage[T]) extends DefaultPromise[T] with BiConsumer[T, Throwable] {
-    override def accept(v: T, e: Throwable): Unit = {
+    override def accept(v: T, e: Throwable|Null): Unit = {
       if (e == null) complete(Success(v))
       else complete(Failure(e))
     }

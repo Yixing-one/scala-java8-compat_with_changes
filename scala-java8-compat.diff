@@ -1,0 +1,166 @@
+diff --git a/src/main/scala-2.13+/scala/compat/java8/converterImpl/StepperExtensions.scala b/src/main/scala-2.13+/scala/compat/java8/converterImpl/StepperExtensions.scala
+index dd75253..9668d2e 100644
+--- a/src/main/scala-2.13+/scala/compat/java8/converterImpl/StepperExtensions.scala
++++ b/src/main/scala-2.13+/scala/compat/java8/converterImpl/StepperExtensions.scala
+@@ -34,7 +34,11 @@ class StepperExtensions[@specialized(Double, Int, Long) A](private val s: Steppe
+         val is = s.asInstanceOf[Stepper[Double]]
+         while (is.hasStep) a += is.nextStep()
+         a.asInstanceOf[C]
+-      case AnyAccumulator | null =>
++      case AnyAccumulator =>
++        val a = new AnyAccumulator[A]
++        while (s.hasStep) a += s.nextStep()
++        a.asInstanceOf[C]
++      case _ =>
+         val a = new AnyAccumulator[A]
+         while (s.hasStep) a += s.nextStep()
+         a.asInstanceOf[C]
+diff --git a/src/main/scala/scala/concurrent/java8/FutureConvertersImpl.scala b/src/main/scala/scala/concurrent/java8/FutureConvertersImpl.scala
+index 3099d6e..8bfe6f8 100644
+--- a/src/main/scala/scala/concurrent/java8/FutureConvertersImpl.scala
++++ b/src/main/scala/scala/concurrent/java8/FutureConvertersImpl.scala
+@@ -59,7 +59,7 @@ object FuturesConvertersImpl {
+     override def exceptionally(fn: JF[Throwable, _ <: T]): CompletableFuture[T] = {
+       val cf = new CompletableFuture[T]
+       whenCompleteAsync(new BiConsumer[T, Throwable] {
+-        override def accept(t: T, e: Throwable): Unit = {
++        override def accept(t: T, e: Throwable|Null): Unit = {
+           if (e == null) cf.complete(t)
+           else {
+             val n: AnyRef =
+@@ -95,7 +95,7 @@ object FuturesConvertersImpl {
+   }
+ 
+   class P[T](val wrapped: CompletionStage[T]) extends DefaultPromise[T] with BiConsumer[T, Throwable] {
+-    override def accept(v: T, e: Throwable): Unit = {
++    override def accept(v: T, e: Throwable|Null): Unit = {
+       if (e == null) complete(Success(v))
+       else complete(Failure(e))
+     }
+diff --git a/src/test/scala-2.13+/scala/compat/java8/StepperTest.scala b/src/test/scala-2.13+/scala/compat/java8/StepperTest.scala
+index e8e51ec..63c545b 100644
+--- a/src/test/scala-2.13+/scala/compat/java8/StepperTest.scala
++++ b/src/test/scala-2.13+/scala/compat/java8/StepperTest.scala
+@@ -30,7 +30,7 @@ class IncStepperA(private val size0: Long) extends IntStepper {
+   override def estimateSize: Long = math.max(0L, size0 - i)
+   def hasStep = i < size0
+   def nextStep() = { i += 1; (i - 1).toInt }
+-  def trySplit() = if (estimateSize <= 1) null else {
++  def trySplit():IntStepper|Null = if (estimateSize <= 1) null else {
+     val sub = new IncStepperA(size0 - (size0 - i)/2)
+     sub.i = i
+     i = sub.size0
+@@ -44,7 +44,7 @@ class IncSpliterator(private val size0: Long) extends Spliterator.OfInt {
+   def characteristics = Spliterator.SIZED | Spliterator.SUBSIZED | Spliterator.ORDERED
+   def estimateSize() = math.max(0L, size0 - i)
+   def tryAdvance(f: java.util.function.IntConsumer): Boolean = if (i >= size0) false else { f.accept(i.toInt); i += 1; true }
+-  def trySplit(): Spliterator.OfInt = if (i+1 >= size0) null else {
++  def trySplit(): Spliterator.OfInt|Null = if (i+1 >= size0) null else {
+     val sub = new IncSpliterator(size0 - (size0 - i)/2)
+     sub.i = i
+     i = sub.size0
+@@ -58,8 +58,8 @@ class MappingStepper[@specialized (Double, Int, Long) A, @specialized(Double, In
+   def hasStep = underlying.hasStep
+   def nextStep() = mapping(underlying.nextStep())
+ 
+-  override def trySplit(): Stepper[B] = {
+-    val r = underlying.trySplit()
++  override def trySplit(): Stepper[B]|Null = {
++    val r:Stepper|Null = underlying.trySplit()
+     if (r == null) null else new MappingStepper[A, B](r, mapping)
+   }
+ 
+@@ -69,8 +69,8 @@ class MappingStepper[@specialized (Double, Int, Long) A, @specialized(Double, In
+     override def hasNext: Boolean = underlying.hasStep
+     override def next(): B = mapping(underlying.nextStep())
+   }
+-  def substep() = {
+-    val undersub = underlying.substep()
++  def substep():Spliterator|Null = {
++    val undersub: Stepper|Null = underlying.substep()
+     if (undersub == null) null
+     else new MappingStepper(undersub, mapping)
+   }
+@@ -81,8 +81,8 @@ class MappingSpliterator[A, B](private val underlying: Spliterator[A], mapping:
+   def characteristics = underlying.characteristics
+   def estimateSize() = underlying.estimateSize()
+   def tryAdvance(f: java.util.function.Consumer[_ >: B]): Boolean = underlying.tryAdvance(new java.util.function.Consumer[A]{ def accept(a: A): Unit = { f.accept(mapping(a)) } })
+-  def trySplit(): Spliterator[B] = {
+-    val undersplit = underlying.trySplit()
++  def trySplit(): Spliterator[B]|Null = {
++    val undersplit:Stepper|Null = underlying.trySplit()
+     if (undersplit == null) null
+     else new MappingSpliterator(undersplit, mapping)
+   }
+@@ -91,8 +91,8 @@ class IntToGenericSpliterator[A](private val underlying: Spliterator.OfInt, mapp
+   def characteristics = underlying.characteristics
+   def estimateSize() = underlying.estimateSize()
+   def tryAdvance(f: java.util.function.Consumer[_ >: A]): Boolean = underlying.tryAdvance(new java.util.function.IntConsumer{ def accept(a: Int): Unit = { f.accept(mapping(a)) } })
+-  def trySplit(): Spliterator[A] = {
+-    val undersplit = underlying.trySplit()
++  def trySplit(): Spliterator[A]|Null = {
++    val undersplit:Stepper|Null = underlying.trySplit()
+     if (undersplit == null) null
+     else new IntToGenericSpliterator[A](undersplit, mapping)
+   }
+@@ -101,8 +101,8 @@ class IntToDoubleSpliterator(private val underlying: Spliterator.OfInt, mapping:
+   def characteristics = underlying.characteristics
+   def estimateSize() = underlying.estimateSize()
+   def tryAdvance(f: java.util.function.DoubleConsumer): Boolean = underlying.tryAdvance(new java.util.function.IntConsumer{ def accept(a: Int): Unit = { f.accept(mapping(a)) } })
+-  def trySplit(): Spliterator.OfDouble = {
+-    val undersplit = underlying.trySplit()
++  def trySplit(): Spliterator.OfDouble|Null = {
++    val undersplit:Stepper|Null = underlying.trySplit()
+     if (undersplit == null) null
+     else new IntToDoubleSpliterator(undersplit, mapping)
+   }
+@@ -111,25 +111,25 @@ class IntToLongSpliterator(private val underlying: Spliterator.OfInt, mapping: I
+   def characteristics = underlying.characteristics
+   def estimateSize() = underlying.estimateSize()
+   def tryAdvance(f: java.util.function.LongConsumer): Boolean = underlying.tryAdvance(new java.util.function.IntConsumer{ def accept(a: Int): Unit = { f.accept(mapping(a)) } })
+-  def trySplit(): Spliterator.OfLong = {
+-    val undersplit = underlying.trySplit()
++  def trySplit(): Spliterator.OfLong|Null = {
++    val undersplit:Stepper|Null = underlying.trySplit()
+     if (undersplit == null) null
+     else new IntToLongSpliterator(undersplit, mapping)
+   }
+ }
+ 
+ class SpliteratorStepper[A](sp: Spliterator[A]) extends AnyStepper[A] {
+-  override def trySplit(): AnyStepper[A] = {
+-    val r = sp.trySplit()
++  override def trySplit(): AnyStepper[A]|Null = {
++    val r:AnyStepper|Null = sp.trySplit()
+     if (r == null) null else new SpliteratorStepper(r)
+   }
+ 
+-  var cache: AnyRef = null
++  var cache: AnyRef|Null = null
+ 
+   override def hasStep: Boolean = cache != null || sp.tryAdvance(x => cache = x.asInstanceOf[AnyRef])
+ 
+   override def nextStep(): A = if (hasStep) {
+-    val r = cache
++    val r: AnyRef|Null= cache
+     cache = null
+     r.asInstanceOf[A]
+   } else throw new NoSuchElementException("")
+@@ -141,7 +141,7 @@ class SpliteratorStepper[A](sp: Spliterator[A]) extends AnyStepper[A] {
+ 
+ class StepperTest {
+   def subs[Z, A, CC <: Stepper[A]](zero: Z)(s: Stepper[A])(f: Stepper[A] => Z, op: (Z, Z) => Z): Z = {
+-    val ss = s.substep()
++    val ss:Stepper|Null = s.substep()
+     if (ss == null) op(zero, f(s))
+     else {
+       val left = subs(zero)(ss)(f, op)
+@@ -267,7 +267,7 @@ class StepperTest {
+     sources.foreach{ case (i,s) => assertEquals(expected(i), s.foldTo(0)(_ + _)(_ >= 6*i)) }
+     sources.foreach{ case (_,s) => assertEquals(-1, s.foldTo(-1)(_ * _)(_ => true)) }
+     sources.foreach{ case (i,s) =>
+-      val ss = s.substep()
++      val ss:Stepper|Null = s.substep()
+       val x = s.foldTo( if (ss == null) 0 else ss.foldTo(0)(_ + _)(_ >= 6*i) )(_ + _)(_ >= 6*i)
+       assertEquals(expected(i), x)
+     }
